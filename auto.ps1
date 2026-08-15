@@ -538,6 +538,71 @@ catch {
     Write-Warning "Không thể chạy Apollo. Lỗi: $_"
 }
 
+# --- Kiểm tra hệ điều hành và chạy lệnh cho Windows Server 2025 ---
+Write-Host ""
+Write-Host "Bước 11: Kiểm tra hệ điều hành và chạy lệnh đặc biệt..." -ForegroundColor Cyan
+
+try {
+    # Lấy thông tin hệ điều hành
+    $osInfo = Get-ComputerInfo | Select-Object WindowsProductName, WindowsVersion
+    
+    Write-Host "Thông tin hệ điều hành: $($osInfo.WindowsProductName) - $($osInfo.WindowsVersion)" -ForegroundColor Gray
+    
+    # Kiểm tra nếu là Windows Server 2025
+    if ($osInfo.WindowsProductName -like "*Server 2025*") {
+        Write-Host "Đây là Windows Server 2025. Đang chạy các lệnh đặc biệt..." -ForegroundColor Green
+        
+        # Chạy các lệnh Add-AppxPackage cho Windows Server 2025
+        try {
+            Write-Host "Đang chạy lệnh Add-AppxPackage cho MicrosoftWindows.Client.CBS..." -ForegroundColor Gray
+            Add-AppxPackage -Register -Path "C:\Windows\SystemApps\MicrosoftWindows.Client.CBS_cw5n1h2txyewy\appxmanifest.xml" -DisableDevelopmentMode
+            Write-Host "Đã chạy lệnh MicrosoftWindows.Client.CBS thành công." -ForegroundColor Green
+        }
+        catch {
+            Write-Warning "Lỗi khi chạy lệnh MicrosoftWindows.Client.CBS: $_"
+        }
+        
+        try {
+            Write-Host "Đang chạy lệnh Add-AppxPackage cho Microsoft.UI.Xaml.CBS..." -ForegroundColor Gray
+            Add-AppxPackage -Register -Path "C:\Windows\SystemApps\Microsoft.UI.Xaml.CBS_8wekyb3d8bbwe\appxmanifest.xml" -DisableDevelopmentMode
+            Write-Host "Đã chạy lệnh Microsoft.UI.Xaml.CBS thành công." -ForegroundColor Green
+        }
+        catch {
+            Write-Warning "Lỗi khi chạy lệnh Microsoft.UI.Xaml.CBS: $_"
+        }
+        
+        try {
+            Write-Host "Đang chạy lệnh Add-AppxPackage cho MicrosoftWindows.Client.Core..." -ForegroundColor Gray
+            Add-AppxPackage -Register -Path "C:\Windows\SystemApps\MicrosoftWindows.Client.Core_cw5n1h2txyewy\appxmanifest.xml" -DisableDevelopmentMode
+            Write-Host "Đã chạy lệnh MicrosoftWindows.Client.Core thành công." -ForegroundColor Green
+        }
+        catch {
+            Write-Warning "Lỗi khi chạy lệnh MicrosoftWindows.Client.Core: $_"
+        }
+        
+        Write-Host "Tất cả các lệnh đặc biệt đã được thực hiện." -ForegroundColor Green
+    }
+    else {
+        Write-Host "Hệ điều hành không phải là Windows Server 2025. Bỏ qua các lệnh đặc biệt." -ForegroundColor Yellow
+    }
+}
+catch {
+    Write-Warning "Lỗi khi kiểm tra hệ điều hành hoặc chạy lệnh đặc biệt: $_"
+}
+
+# --- Kết thúc và khởi động lại ---
+Write-Host ""
+Write-Host "Bước 12: Khởi động lại hệ thống..." -ForegroundColor Cyan
+
+try {
+    Write-Host "Đang khởi động lại hệ thống sau 0 giây..." -ForegroundColor Gray
+    shutdown /r /t 0
+    Write-Host "Đã bắt đầu quá trình khởi động lại." -ForegroundColor Green
+}
+catch {
+    Write-Warning "Không thể khởi động lại hệ thống: $_"
+}
+
 Write-Host ""
 Write-Host "========================================" -ForegroundColor Green
 Write-Host "        CÀI ĐẶT HOÀN TẤT" -ForegroundColor Green
