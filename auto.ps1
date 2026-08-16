@@ -1,651 +1,358 @@
-#===============================.txt
-#===============================================
-# Script Cài Đặt NVIDIA Driver & Các Thành Phần Khác
-#===============================================
-$ErrorActionPreference = "Continue"
+<#
+.SYNOPSIS
+    Trình cài đặt NVIDIA Driver tự động cho Windows Server 2019+
 
-# --- Xác định đường dẫn script ---
-if ($PSScriptRoot -eq "") {
-    $ScriptPath = (Get-Location).Path
-    Write-Host "PSScriptRoot rong, su dung thu muc hien tai: $ScriptPath" -ForegroundColor Yellow
-} else {
-    $ScriptPath = $PSScriptRoot
-}
-Write-Host "Thu muc script: $ScriptPath" -ForegroundColor Cyan
+.DESCRIPTION
+    1. Xác định đa vùng GCP dựa trên metadata của instance.
+    2. Kiểm tra sự hiện diện của GPU NVIDIA sử dụng PCI Vendor ID (10DE).
+    3. Kiểm tra xem nvidia-smi đã được cài đặt chưa.
+    4. Tải xuống trình cài đặt driver theo vùng cụ thể.
+    5. Cài đặt driver một cách âm thầm.
+    6. Dọn dẹp các tệp cài đặt.
+    7. Cấu hình và khởi động dịch vụ âm thanh (Audiosrv và AudioEndpointBuilder).
+    8. Tải và cài đặt Apollo ở chế độ âm thầm.
+
+.NOTES
+    Chạy script này với quyền Quản trị viên.
+#>
+
+$ErrorActionPreference = "Stop"
 
 # --- Kiểm tra quyền Quản trị viên ---
-Write-Host "Dang kiem tra quyen Quan tri vien..." -ForegroundColor Cyan
+Write-Host "Đang kiểm tra quyền Quản trị viên..." -ForegroundColor Cyan
 
 $currentPrincipal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
 $isAdmin = $currentPrincipal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 
 if (-not $isAdmin) {
     Write-Host "========================================" -ForegroundColor Red
-    Write-Host "        LOI: THIEU QUYEN ADMIN" -ForegroundColor Red
+    Write-Host "        LỖI: THIẾU QUYỀN ADMIN" -ForegroundColor Red
     Write-Host "========================================" -ForegroundColor Red
     Write-Host ""
-    Write-Host "Script nay YEU CAU quyen Quan tri vien de chay." -ForegroundColor Yellow
+    Write-Host "Script này YÊU CẦU quyền Quản trị viên để chạy." -ForegroundColor Yellow
     Write-Host ""
-    Write-Host "Vui long:" -ForegroundColor Cyan
-    Write-Host "  1. Nhap chuot phai vao PowerShell" -ForegroundColor White
-    Write-Host "  2. Chon 'Chay voi tu cach quan tri vien'" -ForegroundColor White
-    Write-Host "  3. Chay lai script nay" -ForegroundColor White
+    Write-Host "Vui lòng:" -ForegroundColor Cyan
+    Write-Host "  1. Nhấp chuột phải vào PowerShell" -ForegroundColor White
+    Write-Host "  2. Chọn 'Chạy với tư cách quản trị viên'" -ForegroundColor White
+    Write-Host "  3. Chạy lại script này" -ForegroundColor White
     Write-Host ""
     Write-Host "========================================" -ForegroundColor Red
     Exit 1
 }
 
-Write-Host "Da xac nhan quyen Quan tri vien. Tiep tuc..." -ForegroundColor Green
+Write-Host "Đã xác nhận quyền Quản trị viên. Tiếp tục..." -ForegroundColor Green
 Write-Host ""
 
-# --- Chạy Add-AppxPackage và Stop-Process ngay đầu script (cho tất cả OS) ---
-Write-Host "Dang chay cac lenh Add-AppxPackage va Stop-Process..." -ForegroundColor Cyan
-
-try {
-    Write-Host "  - Dang chay Add-AppxPackage cho MicrosoftWindows.Client.CBS..." -ForegroundColor Gray
-    Add-AppxPackage -Register -Path "C:\Windows\SystemApps\MicrosoftWindows.Client.CBS_cw5n1h2txyewy\appxmanifest.xml" -DisableDevelopmentMode -ErrorAction SilentlyContinue
-    Write-Host "    Da chay lenh MicrosoftWindows.Client.CBS." -ForegroundColor Green
-} catch {
-    Write-Warning "Loi khi chay lenh MicrosoftWindows.Client.CBS: $_ - Skip"
-}
-
-try {
-    Write-Host "  - Dang chay Add-AppxPackage cho Microsoft.UI.Xaml.CBS..." -ForegroundColor Gray
-    Add-AppxPackage -Register -Path "C:\Windows\SystemApps\Microsoft.UI.Xaml.CBS_8wekyb3d8bbwe\appxmanifest.xml" -DisableDevelopmentMode -ErrorAction SilentlyContinue
-    Write-Host "    Da chay lenh Microsoft.UI.Xaml.CBS." -ForegroundColor Green
-} catch {
-    Write-Warning "Loi khi chay lenh Microsoft.UI.Xaml.CBS: $_ - Skip"
-}
-
-try {
-    Write-Host "  - Dang chay Add-AppxPackage cho MicrosoftWindows.Client.Core..." -ForegroundColor Gray
-    Add-AppxPackage -Register -Path "C:\Windows\SystemApps\MicrosoftWindows.Client.Core_cw5n1h2txyewy\appxmanifest.xml" -DisableDevelopmentMode -ErrorAction SilentlyContinue
-    Write-Host "    Da chay lenh MicrosoftWindows.Client.Core." -ForegroundColor Green
-} catch {
-    Write-Warning "Loi khi chay lenh MicrosoftWindows.Client.Core: $_ - Skip"
-}
-
-try {
-    Write-Host "  - Dang dung tien trinh sihost..." -ForegroundColor Gray
-    Stop-Process -Name sihost -Force -ErrorAction SilentlyContinue
-    Write-Host "    Da dung tien trinh sihost." -ForegroundColor Green
-} catch {
-    Write-Warning "Loi khi dung tien trinh sihost: $_ - Skip"
-}
-
-Write-Host "Hoan tat cac lenh dau script." -ForegroundColor Green
-Write-Host ""
-
-# --- Cài đặt WinRAR từ file local ---
-Write-Host "Buoc 1: Cai dat WinRAR tu file local..." -ForegroundColor Cyan
-
-$WinRarLocalPath = Join-Path -Path $ScriptPath -ChildPath "Winrar.exe"
-
-if (Test-Path $WinRarLocalPath) {
-    try {
-        Write-Host "Tim thay file WinRAR tai: $WinRarLocalPath" -ForegroundColor Gray
-        Write-Host "Cai dat WinRAR..." -ForegroundColor Gray
-        Start-Process -FilePath $WinRarLocalPath -ArgumentList "/S" -Wait -Verb RunAs -ErrorAction SilentlyContinue
-        Write-Host "Cai dat WinRAR hoan tat." -ForegroundColor Green
-    } catch {
-        Write-Warning "Loi khi cai dat WinRAR: $_ - Skip"
+# --- Hằng số & Cấu hình ---
+$Drivers = @{
+    "Normal" = @{
+        "Filename" = "582.53_grid_win10_win11_server2022_server_2025_dch_64bit_international.exe"
+        "Hash"     = "6f1210b459efc7f29db930103533c3de9b93c2afdfa8d7b4871640c6b8638c0b"
     }
-} else {
-    Write-Warning "Khong tim thay file WinRAR.exe trong thu muc script - Skip"
-}
-
-# --- Cài đặt DirectX từ file local ---
-Write-Host "Buoc 2: Cai dat DirectX tu file local..." -ForegroundColor Cyan
-
-$DirectXLocalPath = Join-Path -Path $ScriptPath -ChildPath "DX11.exe"
-
-if (Test-Path $DirectXLocalPath) {
-    try {
-        Write-Host "Tim thay file DirectX tai: $DirectXLocalPath" -ForegroundColor Gray
-        Write-Host "Cai dat DirectX..." -ForegroundColor Gray
-        
-        $DX11Dir = Join-Path -Path $env:TEMP -ChildPath "DX11"
-        New-Item -ItemType Directory -Path $DX11Dir -Force -ErrorAction SilentlyContinue
-        
-        Copy-Item -Path $DirectXLocalPath -Destination $DX11Dir -Force -ErrorAction SilentlyContinue
-        
-        Set-Location -Path $DX11Dir -ErrorAction SilentlyContinue
-        Start-Process -FilePath "DXsetup.exe" -ArgumentList "/silent" -Wait -Verb RunAs -ErrorAction SilentlyContinue
-        Write-Host "Cai dat DirectX hoan tat." -ForegroundColor Green
-        
-        Set-Location -Path $env:TEMP -ErrorAction SilentlyContinue
-    } catch {
-        Write-Warning "Loi khi cai dat DirectX: $_ - Skip"
-    }
-} else {
-    Write-Warning "Khong tim thay file DX11.exe trong thu muc script - Skip"
-}
-
-# --- Cài đặt Visual C++ Redistributable ---
-Write-Host "Buoc 3: Cai dat Visual C++ Redistributable..." -ForegroundColor Cyan
-
-$VCRedistLocalPath = Join-Path -Path $ScriptPath -ChildPath "vc_redist.x64.exe"
-$VCRedistPath = $VCRedistLocalPath
-
-if (-not (Test-Path $VCRedistLocalPath)) {
-    Write-Host "Khong tim thay file local, tai tu internet..." -ForegroundColor Gray
-    $VCRedistUrl = "https://aka.ms/vs/17/release/vc_redist.x64.exe"
-    $VCRedistPath = Join-Path -Path $env:TEMP -ChildPath "vc_redist.x64.exe"
-    
-    try {
-        Write-Host "Tai xuong Visual C++ Redistributable tu: $VCRedistUrl" -ForegroundColor Gray
-        $OriginalProgressPreference = $ProgressPreference
-        $ProgressPreference = 'SilentlyContinue'
-        Invoke-WebRequest -Uri $VCRedistUrl -OutFile $VCRedistPath -UseBasicParsing -ErrorAction SilentlyContinue
-        $ProgressPreference = $OriginalProgressPreference
-        Write-Host "Tai xuong Visual C++ Redistributable hoan tat." -ForegroundColor Green
-    } catch {
-        Write-Warning "Loi khi tai Visual C++ Redistributable: $_ - Skip"
-        $VCRedistPath = $null
+    "vGPU"   = @{
+        "Filename" = "582.53_grid_win10_win11_server2022_server2025_dch_64bit_international_gcp_swl.exe"
+        "Hash"     = "8e8689db080a0807cd9efae2368dc1971a60e66fd7defdb5f1c5025fdb0e0ced"
     }
 }
 
-if ($VCRedistPath -and (Test-Path $VCRedistPath)) {
+$TempDir = [System.IO.Path]::GetTempPath()
+$InstallerName = "nvidia_driver_installer.exe"
+$InstallerPath = Join-Path -Path $TempDir -ChildPath $InstallerName
+
+# --- Hằng số cho Apollo ---
+$ApolloUrl = "https://github.com/ClassicOldSong/Apollo/releases/download/v0.4.6/Apollo-0.4.6.exe"
+$ApolloInstallerName = "Apollo-0.4.6.exe"
+$ApolloInstallerPath = Join-Path -Path $TempDir -ChildPath $ApolloInstallerName
+
+# --- Hàm phát hiện vùng ---
+function Get-GcpMultiRegion {
+    # Ánh xạ tiền tố vùng sang đa vùng
+    $RegionMap = @{
+        "africa"       = "eu"
+        "asia"         = "asia"
+        "australia"    = "asia"
+        "europe"       = "eu"
+        "me"           = "eu"
+        "northamerica" = "us"
+        "southamerica" = "us"
+        "us"           = "us"
+    }
+
+    Write-Host "Đang phát hiện vùng GCP..." -ForegroundColor Cyan
+
     try {
-        Write-Host "Cai dat Visual C++ Redistributable..." -ForegroundColor Gray
-        Start-Process -FilePath $VCRedistPath -ArgumentList "/install", "/quiet", "/norestart" -Wait -Verb RunAs -ErrorAction SilentlyContinue
-        Write-Host "Cai dat Visual C++ Redistributable hoan tat." -ForegroundColor Green
-        
-        if ($VCRedistPath -ne $VCRedistLocalPath -and (Test-Path $VCRedistPath)) {
-            Remove-Item -Path $VCRedistPath -Force -ErrorAction SilentlyContinue
+        # Truy vấn máy chủ metadata Google cho zone
+        # Bao gồm timeout để tránh treo nếu không ở trên GCP hoặc metadata không truy cập được
+        $ZoneUrl = "http://metadata.google.internal/computeMetadata/v1/instance/zone"
+        $Response = Invoke-RestMethod -Uri $ZoneUrl -Headers @{"Metadata-Flavor" = "Google"} -TimeoutSec 5 -ErrorAction Stop
+
+        # Định dạng phản hồi thường là: projects/PROJECT_ID/zones/REGION-ZONE (ví dụ: projects/123/zones/us-central1-a)
+        $ZoneName = $Response.Split('/')[-1]
+
+        # Lấy tiền tố vùng (ví dụ: 'us' từ 'us-central1-a')
+        $RegionPrefix = $ZoneName.Split('-')[0]
+
+        if ($RegionMap.ContainsKey($RegionPrefix)) {
+            $MultiRegion = $RegionMap[$RegionPrefix]
+            Write-Host "Đã phát hiện vùng: $RegionPrefix -> Đa vùng: $MultiRegion" -ForegroundColor Green
+            return $MultiRegion
         }
-    } catch {
-        Write-Warning "Loi khi cai dat Visual C++ Redistributable: $_ - Skip"
     }
+    catch {
+        Write-Warning "Không thể phát hiện vùng GCP qua máy chủ metadata. Mặc định là 'us'."
+    }
+
+    return "us"
 }
 
-# --- Cài đặt StarDesk từ file local ---
-Write-Host "Buoc 4: Cai dat StarDesk tu file local..." -ForegroundColor Cyan
-
-$StarDeskLocalPath = Join-Path -Path $ScriptPath -ChildPath "Stardesk.exe"
-
-if (Test-Path $StarDeskLocalPath) {
+# --- Hàm phát hiện loại máy ---
+function Get-MachineType {
     try {
-        Write-Host "Tim thay file StarDesk tai: $StarDeskLocalPath" -ForegroundColor Gray
-        Write-Host "Cai dat StarDesk..." -ForegroundColor Gray
-        Start-Process -FilePath $StarDeskLocalPath -ArgumentList "/S" -Wait -Verb RunAs -ErrorAction SilentlyContinue
-        Write-Host "Cai dat StarDesk hoan tat." -ForegroundColor Green
-    } catch {
-        Write-Warning "Loi khi cai dat StarDesk: $_ - Skip"
-    }
-} else {
-    Write-Warning "Khong tim thay file Stardesk.exe trong thu muc script - Skip"
-}
-
-# --- Cài đặt IDM từ file local ---
-Write-Host "Buoc 5: Cai dat IDM tu file local..." -ForegroundColor Cyan
-
-$IDMLocalPath = Join-Path -Path $ScriptPath -ChildPath "IDM.exe"
-
-if (Test-Path $IDMLocalPath) {
-    try {
-        Write-Host "Tim thay file IDM tai: $IDMLocalPath" -ForegroundColor Gray
-        Write-Host "Cai dat IDM..." -ForegroundColor Gray
-        Start-Process -FilePath $IDMLocalPath -ArgumentList "/S" -Wait -Verb RunAs -ErrorAction SilentlyContinue
-        Write-Host "Cai dat IDM hoan tat." -ForegroundColor Green
-    } catch {
-        Write-Warning "Loi khi cai dat IDM: $_ - Skip"
-    }
-} else {
-    Write-Warning "Khong tim thay file IDM.exe trong thu muc script - Skip"
-}
-
-# --- Cài đặt Steam từ file local ---
-Write-Host "Buoc 6: Cai dat Steam tu file local..." -ForegroundColor Cyan
-
-$SteamLocalPath = Join-Path -Path $ScriptPath -ChildPath "Steam.exe"
-
-if (Test-Path $SteamLocalPath) {
-    try {
-        Write-Host "Tim thay file Steam tai: $SteamLocalPath" -ForegroundColor Gray
-        Write-Host "Cai dat Steam..." -ForegroundColor Gray
-        Start-Process -FilePath $SteamLocalPath -ArgumentList "/S" -Wait -Verb RunAs -ErrorAction SilentlyContinue
-        Write-Host "Cai dat Steam hoan tat." -ForegroundColor Green
-    } catch {
-        Write-Warning "Loi khi cai dat Steam: $_ - Skip"
-    }
-} else {
-    Write-Warning "Khong tim thay file Steam.exe trong thu muc script - Skip"
-}
-
-# --- Copy console.bat ra Desktop ---
-Write-Host "Buoc 7: Copy console.bat ra Desktop..." -ForegroundColor Cyan
-
-$ConsoleBatLocalPath = Join-Path -Path $ScriptPath -ChildPath "console.bat"
-
-if (Test-Path $ConsoleBatLocalPath) {
-    try {
-        $DesktopPath = [Environment]::GetFolderPath("Desktop")
-        $DestPath = Join-Path -Path $DesktopPath -ChildPath "console.bat"
+        Write-Host "Đang phát hiện loại máy..." -ForegroundColor Cyan
         
-        Write-Host "Copy console.bat tu: $ConsoleBatLocalPath" -ForegroundColor Gray
-        Write-Host "Den: $DestPath" -ForegroundColor Gray
+        $MachineTypeUrl = "http://metadata.google.internal/computeMetadata/v1/instance/machine-type"
+        $Response = Invoke-RestMethod -Uri $MachineTypeUrl -Headers @{"Metadata-Flavor" = "Google"} -TimeoutSec 5 -ErrorAction Stop
         
-        Copy-Item -Path $ConsoleBatLocalPath -Destination $DestPath -Force -ErrorAction SilentlyContinue
-        Write-Host "Da copy console.bat ra Desktop." -ForegroundColor Green
-    } catch {
-        Write-Warning "Loi khi copy console.bat: $_ - Skip"
+        # projects/PROJECT_ID/machineTypes/MACHINE_TYPE
+        $MachineType = $Response.Split('/')[-1]
+        Write-Host "Đã phát hiện loại máy: $MachineType" -ForegroundColor Green
+        
+        if ($MachineType -in ('g4-standard-6', 'g4-standard-12', 'g4-standard-24')) {
+            return "vGPU"
+        }
+        
+        $InstanceUrl = "http://metadata.google.internal/computeMetadata/v1/instance/"
+        $Response = Invoke-RestMethod -Uri $InstanceUrl -Headers @{"Metadata-Flavor" = "Google"} -TimeoutSec 5 -ErrorAction Stop
+        
+        if ($Response -like "*nvidia-grid-license*") {
+            # Virtual Workstation
+            return "Normal" 
+        }
     }
-} else {
-    Write-Warning "Khong tim thay file console.bat trong thu muc script - Skip"
+    catch {
+        Write-Warning "Không thể phát hiện loại máy qua máy chủ metadata. Mặc định là 'Normal'."
+    }
+    return "Normal"
 }
 
-# --- Tải và đặt wallpaper ngẫu nhiên ---
-Write-Host "Buoc 8: Tai va dat wallpaper ngau nhien..." -ForegroundColor Cyan
+# --- Hàm phát hiện GPU ---
+function Get-Mgmt-Command {
+    $Command = 'Get-CimInstance'
+    if (Get-Command Get-WmiObject -ErrorAction SilentlyContinue) {
+        $Command = 'Get-WmiObject'
+    }
+    return $Command
+}
 
-$WallpaperUrls = @(
-    "https://raw.githubusercontent.com/zenixbot0101/Moonlight-Web-2.0/main/roblox-wallpaper.jpg",
-    "https://raw.githubusercontent.com/zenixbot0101/Moonlight-Web-2.0/main/roblox-wallpaper.jpg",
-    "https://raw.githubusercontent.com/zenixbot0101/Moonlight-Web-2.0/main/wallpaper11.jpg",
-    "https://raw.githubusercontent.com/zenixbot0101/Moonlight-Web-2.0/main/wall1.png",
-    "https://raw.githubusercontent.com/zenixbot0101/Moonlight-Web-2.0/main/wall2.png"
-)
+function Find-GPU {
+    $MgmtCommand = Get-Mgmt-Command
+    try {
+        # Truy vấn cụ thể cho NVIDIA (VEN_10DE) trong lớp Display hoặc 3D Controller
+        $Command = "(${MgmtCommand} -query ""select DeviceID from Win32_PNPEntity Where (deviceid Like '%PCI\\VEN_10DE%') and (PNPClass = 'Display' or Name = '3D Video Controller')"" | Select-Object DeviceID -ExpandProperty DeviceID).substring(13,8)"
+        $dev_id = Invoke-Expression -Command $Command
+        return $dev_id
+    }
+    catch {
+        Write-Warning "Dường như không có GPU nào được kết nối với hệ thống của bạn."
+        return ""
+    }
+}
+
+# --- Bước 0: Xác định URL tải xuống ---
+$MultiRegion = Get-GcpMultiRegion
+$MachineType = Get-MachineType
+
+$DriverInfo = $Drivers[$MachineType]
+$DriverVersionFilename = $DriverInfo["Filename"]
+$ExpectedSha256 = $DriverInfo["Hash"]
+
+$DriverUrl = "https://storage.googleapis.com/compute-gpu-installation-$MultiRegion/windows/$DriverVersionFilename"
+
+# --- Bước 1: Kiểm tra sự hiện diện của GPU ---
+Write-Host "Bước 1: Đang kiểm tra GPU NVIDIA (Kiểm tra PCI ID)..." -ForegroundColor Cyan
+
+$gpuId = Find-GPU
+
+if ([string]::IsNullOrWhiteSpace($gpuId)) {
+    Write-Warning "Không phát hiện GPU NVIDIA (VEN_10DE) qua kiểm tra PnP Entity. Đang thoát."
+    Exit
+} else {
+    Write-Host "Đã phát hiện GPU với chuỗi Device ID: $gpuId" -ForegroundColor Green
+}
+
+# --- Bước 2: Kiểm tra nvidia-smi ---
+Write-Host "Bước 2: Đang kiểm tra cài đặt hiện có (nvidia-smi)..." -ForegroundColor Cyan
+
+$smiCommand = Get-Command "nvidia-smi" -ErrorAction SilentlyContinue
+$smiPathDefault = "C:\Program Files\NVIDIA Corporation\NVSMI\nvidia-smi.exe"
+$smiPathSystem = "C:\Windows\System32\nvidia-smi.exe"
+
+if ($smiCommand -or (Test-Path $smiPathDefault) -or (Test-Path $smiPathSystem)) {
+    Write-Warning "nvidia-smi đã tồn tại. Driver dường như đã được cài đặt. Đang thoát."
+    Exit
+} else {
+    Write-Host "Không tìm thấy nvidia-smi. Tiến hành cài đặt." -ForegroundColor Green
+}
+
+# --- Bước 3: Tải xuống trình cài đặt ---
+Write-Host "Bước 3: Đang tải xuống driver..." -ForegroundColor Cyan
+Write-Host "Nguồn: $DriverUrl" -ForegroundColor Gray
+
+# Đảm bảo TLS 1.2 được bật để tải xuống
+[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
 try {
-    $randomIndex = Get-Random -Minimum 0 -Maximum $WallpaperUrls.Count
-    $selectedUrl = $WallpaperUrls[$randomIndex]
-    
-    Write-Host "Dang chon wallpaper ngau nhien: $selectedUrl" -ForegroundColor Gray
-    
-    $wallpaperPath = Join-Path -Path $env:TEMP -ChildPath "wallpaper.jpg"
+    # SỬA LỖI HIỆU SUẤT QUAN TRỌNG:
+    # Thanh tiến trình của Invoke-WebRequest làm chậm đáng kể quá trình tải xuống trong Windows PowerShell 5.1.
+    # Chúng tôi tạm thời vô hiệu hóa nó để tăng tốc quá trình truyền.
     $OriginalProgressPreference = $ProgressPreference
     $ProgressPreference = 'SilentlyContinue'
-    Invoke-WebRequest -Uri $selectedUrl -OutFile $wallpaperPath -UseBasicParsing -ErrorAction SilentlyContinue
+
+    Invoke-WebRequest -Uri $DriverUrl -OutFile $InstallerPath -UseBasicParsing
+
+    # Khôi phục tùy chọn
     $ProgressPreference = $OriginalProgressPreference
-    Write-Host "Tai xuong wallpaper hoan tat." -ForegroundColor Green
-    
-    Add-Type -AssemblyName System.Windows.Forms -ErrorAction SilentlyContinue
-    [System.Windows.Forms.SystemInformation]::VirtualScreen
-    $shell = New-Object -ComObject WScript.Shell -ErrorAction SilentlyContinue
-    $shortcut = $shell.CreateShortcut("$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Startup\wallpaper.lnk")
-    $shortcut.TargetPath = "rundll32.exe"
-    $shortcut.Arguments = "user32.dll,UpdatePerUserSystemParameters"
-    $shortcut.Save()
-    
-    $regPath = "HKCU:\Control Panel\Desktop"
-    Set-ItemProperty -Path $regPath -Name Wallpaper -Value $wallpaperPath -ErrorAction SilentlyContinue
-    Set-ItemProperty -Path $regPath -Name WallpaperStyle -Value 2 -ErrorAction SilentlyContinue
-    Set-ItemProperty -Path $regPath -Name TileWallpaper -Value 0 -ErrorAction SilentlyContinue
-    
-    Add-Type -AssemblyName System.Windows.Forms -ErrorAction SilentlyContinue
-    [System.Windows.Forms.SystemInformation]::VirtualScreen
-    [System.Windows.Forms.Application]::SetCompatibleTextRenderingDefault($false)
-    
-    $sig = @"
-[DllImport("user32.dll", SetLastError = true)]
-public static extern int SystemParametersInfo(int uAction, int uParam, string lpvParam, int fuWinIni);
-"@
-    
-    $SPI_SETDESKWALLPAPER = 20
-    $SPIF_UPDATEINIFILE = 0x01
-    $SPIF_SENDCHANGE = 0x02
-    
-    $setWallpaper = Add-Type -MemberDefinition $sig -Name "Win32" -Namespace "Win32" -PassThru -ErrorAction SilentlyContinue
-    $setWallpaper::SystemParametersInfo($SPI_SETDESKWALLPAPER, 0, $wallpaperPath, ($SPIF_UPDATEINIFILE -bor $SPIF_SENDCHANGE))
-    
-    Write-Host "Da dat wallpaper thanh cong." -ForegroundColor Green
-    
-    Remove-Item -Path $wallpaperPath -Force -ErrorAction SilentlyContinue
-} catch {
-    Write-Warning "Loi khi tai hoac dat wallpaper: $_ - Skip"
+
+    Write-Host "Tải xuống hoàn tất. Đã lưu tại: $InstallerPath" -ForegroundColor Green
+
+    # --- Bước 3.1: Xác minh Checksum ---
+    if (-not [string]::IsNullOrWhiteSpace($ExpectedSha256)) {
+        Write-Host "Đang xác minh checksum SHA256..." -ForegroundColor Cyan
+        $ComputedHash = (Get-FileHash -Path $InstallerPath -Algorithm SHA256).Hash
+
+        if ($ComputedHash -eq $ExpectedSha256) {
+            Write-Host "Checksum đã được xác minh." -ForegroundColor Green
+        } else {
+            # Xóa ngay tệp bị lỗi
+            Remove-Item -Path $InstallerPath -Force
+            Write-Error "Checksum không khớp! Dự kiến: $ExpectedSha256, Tính toán: $ComputedHash"
+            Exit
+        }
+    }
+}
+catch {
+    Write-Error "Không thể tải xuống hoặc xác minh trình cài đặt. Lỗi: $_"
+    Exit
 }
 
-# --- Tắt tất cả các cổng Windows ---
-Write-Host "Buoc 9: Tat tat ca cac cong Windows..." -ForegroundColor Cyan
+# --- Bước 4 và 5: Thực thi và chờ ---
+Write-Host "Bước 4: Đang thực thi trình cài đặt..." -ForegroundColor Cyan
+Write-Host "Cờ sử dụng: /s /n (Âm thầm, Không khởi động lại)" -ForegroundColor Gray
 
 try {
-    Write-Host "Tat tat ca cac cong Windows (firewall)..." -ForegroundColor Gray
-    # Sử dụng đúng cú pháp netsh
-    netsh advfirewall set allprofiles state off
-    Write-Host "Da tat tat ca cac cong Windows." -ForegroundColor Green
-} catch {
-    Write-Warning "Loi khi tat cong Windows: $_ - Skip"
-}
+    # Khởi động tiến trình với /s (âm thầm) và /n (không khởi động lại)
+    $process = Start-Process -FilePath $InstallerPath -ArgumentList "/s", "/n" -PassThru -Wait -Verb RunAs
 
-# --- Tắt Windows Defender ---
-Write-Host "Buoc 10: Tat Windows Defender..." -ForegroundColor Cyan
-
-try {
-    Write-Host "Tat Windows Defender..." -ForegroundColor Gray
-    Stop-Service -Name "WinDefend" -Force -ErrorAction SilentlyContinue
-    Set-Service -Name "WinDefend" -StartupType Disabled -ErrorAction SilentlyContinue
-    
-    # Tắt Windows Defender Firewall
-    netsh advfirewall set allprofiles state off
-    
-    # Tắt Windows Defender Real-time Protection
-    Set-MpPreference -DisableRealtimeMonitoring $true -ErrorAction SilentlyContinue
-    
-    Write-Host "Da tat Windows Defender." -ForegroundColor Green
-} catch {
-    Write-Warning "Loi khi tat Windows Defender: $_ - Skip"
-}
-
-# --- Cài đặt NVIDIA Driver ---
-Write-Host "Buoc 11: Cai dat NVIDIA Driver..." -ForegroundColor Cyan
-
-try {
-    $Drivers = @{
-        "Normal" = @{
-            "Filename" = "582.53_grid_win10_win11_server2022_server_2025_dch_64bit_international.exe"
-            "Hash"     = "6f1210b459efc7f29db930103533c3de9b93c2afdfa8d7b4871640c6b8638c0b"
-        }
-        "vGPU"   = @{
-            "Filename" = "582.53_grid_win10_win11_server2022_server2025_dch_64bit_international_gcp_swl.exe"
-            "Hash"     = "8e8689db080a0807cd9efae2368dc1971a60e66fd7defdb5f1c5025fdb0e0ced"
-        }
-    }
-
-    $TempDir = [System.IO.Path]::GetTempPath()
-    $InstallerName = "nvidia_driver_installer.exe"
-    $InstallerPath = Join-Path -Path $TempDir -ChildPath $InstallerName
-
-    $ApolloUrl = "https://github.com/ClassicOldSong/Apollo/releases/download/v0.4.6/Apollo-0.4.6.exe"
-    $ApolloInstallerName = "Apollo-0.4.6.exe"
-    $ApolloInstallerPath = Join-Path -Path $TempDir -ChildPath $ApolloInstallerName
-
-    function Get-GcpMultiRegion {
-        $RegionMap = @{
-            "africa"       = "eu"
-            "asia"         = "asia"
-            "australia"    = "asia"
-            "europe"       = "eu"
-            "me"           = "eu"
-            "northamerica" = "us"
-            "southamerica" = "us"
-            "us"           = "us"
-        }
-
-        Write-Host "Dang phat hien vung GCP..." -ForegroundColor Cyan
-
-        try {
-            $ZoneUrl = "http://metadata.google.internal/computeMetadata/v1/instance/zone"
-            $Response = Invoke-RestMethod -Uri $ZoneUrl -Headers @{"Metadata-Flavor" = "Google"} -TimeoutSec 5 -ErrorAction SilentlyContinue
-
-            $ZoneName = $Response.Split('/')[-1]
-            $RegionPrefix = $ZoneName.Split('-')[0]
-
-            if ($RegionMap.ContainsKey($RegionPrefix)) {
-                $MultiRegion = $RegionMap[$RegionPrefix]
-                Write-Host "Da phat hien vung: $RegionPrefix -> Da vung: $MultiRegion" -ForegroundColor Green
-                return $MultiRegion
-            }
-        }
-        catch {
-            Write-Warning "Khong the phat hien vung GCP qua may chu metadata. Mac dinh la 'us'."
-        }
-
-        return "us"
-    }
-
-    function Get-MachineType {
-        try {
-            Write-Host "Dang phat hien loai may..." -ForegroundColor Cyan
-            
-            $MachineTypeUrl = "http://metadata.google.internal/computeMetadata/v1/instance/machine-type"
-            $Response = Invoke-RestMethod -Uri $MachineTypeUrl -Headers @{"Metadata-Flavor" = "Google"} -TimeoutSec 5 -ErrorAction SilentlyContinue
-            
-            $MachineType = $Response.Split('/')[-1]
-            Write-Host "Da phat hien loai may: $MachineType" -ForegroundColor Green
-            
-            if ($MachineType -in ('g4-standard-6', 'g4-standard-12', 'g4-standard-24')) {
-                return "vGPU"
-            }
-            
-            $InstanceUrl = "http://metadata.google.internal/computeMetadata/v1/instance/"
-            $Response = Invoke-RestMethod -Uri $InstanceUrl -Headers @{"Metadata-Flavor" = "Google"} -TimeoutSec 5 -ErrorAction SilentlyContinue
-            
-            if ($Response -like "*nvidia-grid-license*") {
-                return "Normal" 
-            }
-        }
-        catch {
-            Write-Warning "Khong the phat hien loai may qua may chu metadata. Mac dinh la 'Normal'."
-        }
-        return "Normal"
-    }
-
-    function Get-Mgmt-Command {
-        $Command = 'Get-CimInstance'
-        if (Get-Command Get-WmiObject -ErrorAction SilentlyContinue) {
-            $Command = 'Get-WmiObject'
-        }
-        return $Command
-    }
-
-    function Find-GPU {
-        $MgmtCommand = Get-Mgmt-Command
-        try {
-            $Command = "(${MgmtCommand} -query ""select DeviceID from Win32_PNPEntity Where (deviceid Like '%PCI\\VEN_10DE%') and (PNPClass = 'Display' or Name = '3D Video Controller')"" | Select-Object DeviceID -ExpandProperty DeviceID).substring(13,8)"
-            $dev_id = Invoke-Expression -Command $Command -ErrorAction SilentlyContinue
-            return $dev_id
-        }
-        catch {
-            Write-Warning "Duong nhu khong co GPU nao duoc ket noi voi he thong cua ban."
-            return ""
-        }
-    }
-
-    $MultiRegion = Get-GcpMultiRegion
-    $MachineType = Get-MachineType
-
-    $DriverInfo = $Drivers[$MachineType]
-    $DriverVersionFilename = $DriverInfo["Filename"]
-    $ExpectedSha256 = $DriverInfo["Hash"]
-
-    $DriverUrl = "https://storage.googleapis.com/compute-gpu-installation-$MultiRegion/windows/$DriverVersionFilename"
-
-    Write-Host "Dang kiem tra GPU NVIDIA (Kiem tra PCI ID)..." -ForegroundColor Cyan
-
-    $gpuId = Find-GPU
-
-    if ([string]::IsNullOrWhiteSpace($gpuId)) {
-        Write-Warning "Khong phat hien GPU NVIDIA (VEN_10DE) qua kiem tra PnP Entity. Tiep tuc cac buoc khac..."
+    if ($process.ExitCode -eq 0) {
+        Write-Host "Cài đặt hoàn tất thành công." -ForegroundColor Green
     } else {
-        Write-Host "Da phat hien GPU voi chuoi Device ID: $gpuId" -ForegroundColor Green
+        Write-Warning "Cài đặt hoàn tất với mã thoát: $($process.ExitCode). Điều này có thể cho thấy cần khởi động lại hoặc cảnh báo không nghiêm trọng."
     }
+}
+catch {
+    Write-Error "Không thể thực thi trình cài đặt. Lỗi: $_"
+    Exit
+}
 
-    Write-Host "Dang kiem tra cai dat hien co (nvidia-smi)..." -ForegroundColor Cyan
+# --- Dọn dẹp ---
+Write-Host "Đang dọn dẹp các tệp tạm thời..." -ForegroundColor Cyan
+if (Test-Path $InstallerPath) {
+    Remove-Item -Path $InstallerPath -Force
+}
 
-    $smiCommand = Get-Command "nvidia-smi" -ErrorAction SilentlyContinue
-    $smiPathDefault = "C:\Program Files\NVIDIA Corporation\NVSMI\nvidia-smi.exe"
-    $smiPathSystem = "C:\Windows\System32\nvidia-smi.exe"
+# --- Bước 6: Cấu hình và khởi động dịch vụ âm thanh ---
+Write-Host ""
+Write-Host "Bước 6: Đang cấu hình và khởi động dịch vụ âm thanh..." -ForegroundColor Cyan
 
-    if ($smiCommand -or (Test-Path $smiPathDefault) -or (Test-Path $smiPathSystem)) {
-        Write-Warning "nvidia-smi da ton tai. Driver duong nhu da duoc cai dat. Bo qua buoc nay."
+try {
+    # Cấu hình dịch vụ Audiosrv
+    Write-Host "  - Cấu hình Audiosrv (Windows Audio)..." -ForegroundColor Gray
+    $audiosrv = sc.exe config Audiosrv start= auto
+    if ($LASTEXITCODE -eq 0) {
+        Write-Host "    Đã cấu hình Audiosrv thành công." -ForegroundColor Green
     } else {
-        Write-Host "Khong tim thay nvidia-smi. Tien hanh cai dat." -ForegroundColor Green
-
-        Write-Host "Dang tai xuong driver..." -ForegroundColor Cyan
-        Write-Host "Nguon: $DriverUrl" -ForegroundColor Gray
-
-        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-
-        try {
-            $OriginalProgressPreference = $ProgressPreference
-            $ProgressPreference = 'SilentlyContinue'
-
-            Invoke-WebRequest -Uri $DriverUrl -OutFile $InstallerPath -UseBasicParsing -ErrorAction SilentlyContinue
-
-            $ProgressPreference = $OriginalProgressPreference
-
-            Write-Host "Tai xuong hoan tat. Da luu tai: $InstallerPath" -ForegroundColor Green
-
-            if (-not [string]::IsNullOrWhiteSpace($ExpectedSha256)) {
-                Write-Host "Dang xac minh checksum SHA256..." -ForegroundColor Cyan
-                $ComputedHash = (Get-FileHash -Path $InstallerPath -Algorithm SHA256).Hash
-
-                if ($ComputedHash -eq $ExpectedSha256) {
-                    Write-Host "Checksum da duoc xac minh." -ForegroundColor Green
-                } else {
-                    Remove-Item -Path $InstallerPath -Force -ErrorAction SilentlyContinue
-                    Write-Warning "Checksum khong khop! Bo qua buoc cai dat NVIDIA."
-                    $InstallerPath = $null
-                }
-            }
-        }
-        catch {
-            Write-Warning "Khong the tai xuong hoac xac minh trinh cai dat. Loi: $_ - Skip"
-            $InstallerPath = $null
-        }
-
-        if ($InstallerPath -and (Test-Path $InstallerPath)) {
-            Write-Host "Dang thuc thi trinh cai dat..." -ForegroundColor Cyan
-            Write-Host "Co su dung: /s /n (Am tham, Khong khoi dong lai)" -ForegroundColor Gray
-
-            try {
-                $process = Start-Process -FilePath $InstallerPath -ArgumentList "/s", "/n" -PassThru -Wait -Verb RunAs -ErrorAction SilentlyContinue
-
-                if ($process.ExitCode -eq 0) {
-                    Write-Host "Cai dat hoan tat thanh cong." -ForegroundColor Green
-                } else {
-                    Write-Warning "Cai dat hoan tat voi ma thoat: $($process.ExitCode)."
-                }
-            }
-            catch {
-                Write-Warning "Khong the thuc thi trinh cai dat. Loi: $_ - Skip"
-            }
-
-            Write-Host "Dang don dep cac tep tam thoi..." -ForegroundColor Cyan
-            if (Test-Path $InstallerPath) {
-                Remove-Item -Path $InstallerPath -Force -ErrorAction SilentlyContinue
-            }
-        }
+        Write-Warning "    Không thể cấu hình Audiosrv. Mã lỗi: $LASTEXITCODE"
     }
-} catch {
-    Write-Warning "Loi trong qua trinh cai dat NVIDIA Driver: $_ - Skip"
-}
 
-# --- Cấu hình và khởi động dịch vụ âm thanh ---
-Write-Host ""
-Write-Host "Buoc 12: Dang cau hinh va khoi dong dich vu am thanh..." -ForegroundColor Cyan
-
-try {
-    Write-Host "  - Khoi dong Audiosrv (Windows Audio)..." -ForegroundColor Gray
-    Start-Service -Name "Audiosrv" -ErrorAction SilentlyContinue
-    Set-Service -Name "Audiosrv" -StartupType Automatic -ErrorAction SilentlyContinue
-    Write-Host "    Da khoi dong Audiosrv." -ForegroundColor Green
-
-    Write-Host "  - Khoi dong AudioEndpointBuilder..." -ForegroundColor Gray
-    Start-Service -Name "AudioEndpointBuilder" -ErrorAction SilentlyContinue
-    Set-Service -Name "AudioEndpointBuilder" -StartupType Automatic -ErrorAction SilentlyContinue
-    Write-Host "    Da khoi dong AudioEndpointBuilder." -ForegroundColor Green
-
-    Write-Host "Hoan tat cau hinh dich vu am thanh." -ForegroundColor Green
-} catch {
-    Write-Warning "Da xay ra loi khi cau hinh dich vu am thanh: $_ - Skip"
-}
-
-# --- Cài đặt Apollo ---
-Write-Host ""
-Write-Host "Buoc 13: Cai dat Apollo..." -ForegroundColor Cyan
-
-try {
-    $ApolloLocalPath = Join-Path -Path $ScriptPath -ChildPath "Apollo-0.4.6.exe"
-
-    if (Test-Path $ApolloLocalPath) {
-        try {
-            Write-Host "Tim thay file Apollo tai: $ApolloLocalPath" -ForegroundColor Gray
-            Write-Host "Dang cai dat Apollo (che do am tham)..." -ForegroundColor Gray
-            $apolloProcess = Start-Process -FilePath $ApolloLocalPath -ArgumentList "/S" -PassThru -Wait -Verb RunAs -ErrorAction SilentlyContinue
-
-            if ($apolloProcess.ExitCode -eq 0) {
-                Write-Host "Cai dat Apollo thanh cong." -ForegroundColor Green
-            } else {
-                Write-Warning "Cai dat Apollo hoan tat voi ma thoat: $($apolloProcess.ExitCode)."
-            }
-        } catch {
-            Write-Warning "Loi khi cai dat Apollo: $_ - Skip"
-        }
+    # Khởi động dịch vụ Audiosrv
+    Write-Host "  - Khởi động Audiosrv (Windows Audio)..." -ForegroundColor Gray
+    $startAudiosrv = net start Audiosrv
+    if ($LASTEXITCODE -eq 0) {
+        Write-Host "    Đã khởi động Audiosrv thành công." -ForegroundColor Green
     } else {
-        Write-Warning "Khong tim thay file Apollo-0.4.6.exe trong thu muc script. Dang tai tu internet..."
-        
-        try {
-            Write-Host "  - Dang tai Apollo tu: $ApolloUrl" -ForegroundColor Gray
-            
-            $OriginalProgressPreference = $ProgressPreference
-            $ProgressPreference = 'SilentlyContinue'
-            
-            Invoke-WebRequest -Uri $ApolloUrl -OutFile $ApolloInstallerPath -UseBasicParsing -ErrorAction SilentlyContinue
-            
-            $ProgressPreference = $OriginalProgressPreference
-            
-            Write-Host "    Da tai xuong: $ApolloInstallerPath" -ForegroundColor Green
-
-            Write-Host "  - Dang cai dat Apollo (che do am tham)..." -ForegroundColor Gray
-            $apolloProcess = Start-Process -FilePath $ApolloInstallerPath -ArgumentList "/S" -PassThru -Wait -Verb RunAs -ErrorAction SilentlyContinue
-
-            if ($apolloProcess.ExitCode -eq 0) {
-                Write-Host "    Cai dat Apollo thanh cong." -ForegroundColor Green
-            } else {
-                Write-Warning "    Cai dat Apollo hoan tat voi ma thoat: $($apolloProcess.ExitCode)."
-            }
-
-            if (Test-Path $ApolloInstallerPath) {
-                Remove-Item -Path $ApolloInstallerPath -Force -ErrorAction SilentlyContinue
-                Write-Host "  - Da don dep file cai dat Apollo." -ForegroundColor Gray
-            }
-        } catch {
-            Write-Warning "Khong the tai hoac cai dat Apollo. Loi: $_ - Skip"
-        }
+        Write-Warning "    Không thể khởi động Audiosrv. Mã lỗi: $LASTEXITCODE"
     }
-} catch {
-    Write-Warning "Loi trong qua trinh cai dat Apollo: $_ - Skip"
-}
 
-# --- Tự động chạy Apollo ---
-Write-Host ""
-Write-Host "Buoc 14: Tu dong chay Apollo..." -ForegroundColor Cyan
-
-try {
-    $apolloPath = "C:\Program Files\Apollo\Apollo.exe"
-    if (Test-Path $apolloPath) {
-        Write-Host "Dang chay Apollo..." -ForegroundColor Gray
-        Start-Process -FilePath $apolloPath -Verb RunAs -ErrorAction SilentlyContinue
-        Write-Host "Da chay Apollo thanh cong." -ForegroundColor Green
+    # Cấu hình dịch vụ AudioEndpointBuilder
+    Write-Host "  - Cấu hình AudioEndpointBuilder..." -ForegroundColor Gray
+    $audioEndpoint = sc.exe config AudioEndpointBuilder start= auto
+    if ($LASTEXITCODE -eq 0) {
+        Write-Host "    Đã cấu hình AudioEndpointBuilder thành công." -ForegroundColor Green
     } else {
-        Write-Warning "Khong tim thay Apollo de chay. Co the Apollo chua duoc cai dat hoac duong dan khong dung."
+        Write-Warning "    Không thể cấu hình AudioEndpointBuilder. Mã lỗi: $LASTEXITCODE"
     }
-} catch {
-    Write-Warning "Khong the chay Apollo. Loi: $_ - Skip"
+
+    # Khởi động dịch vụ AudioEndpointBuilder
+    Write-Host "  - Khởi động AudioEndpointBuilder..." -ForegroundColor Gray
+    $startAudioEndpoint = net start AudioEndpointBuilder
+    if ($LASTEXITCODE -eq 0) {
+        Write-Host "    Đã khởi động AudioEndpointBuilder thành công." -ForegroundColor Green
+    } else {
+        Write-Warning "    Không thể khởi động AudioEndpointBuilder. Mã lỗi: $LASTEXITCODE"
+    }
+
+    Write-Host "Hoàn tất cấu hình dịch vụ âm thanh." -ForegroundColor Green
+}
+catch {
+    Write-Warning "Đã xảy ra lỗi khi cấu hình dịch vụ âm thanh: $_"
 }
 
-# --- Khởi động lại hệ thống ---
+# --- Bước 7: Tải và cài đặt Apollo ---
 Write-Host ""
-Write-Host "Buoc 15: Khoi dong lai he thong..." -ForegroundColor Cyan
+Write-Host "Bước 7: Đang tải và cài đặt Apollo..." -ForegroundColor Cyan
 
 try {
-    Write-Host "Dang khoi dong lai he thong sau 10 giay..." -ForegroundColor Gray
-    shutdown /r /t 10 /c "He thong se khoi dong lai sau 10 giay"
-    Write-Host "Da bat dau qua trinh khoi dong lai." -ForegroundColor Green
-} catch {
-    Write-Warning "Khong the khoi dong lai he thong: $_ - Skip"
+    # Tải file Apollo về thư mục tạm
+    Write-Host "  - Đang tải Apollo từ: $ApolloUrl" -ForegroundColor Gray
+    
+    # Tắt thanh tiến trình để tải nhanh hơn
+    $OriginalProgressPreference = $ProgressPreference
+    $ProgressPreference = 'SilentlyContinue'
+    
+    Invoke-WebRequest -Uri $ApolloUrl -OutFile $ApolloInstallerPath -UseBasicParsing
+    
+    # Khôi phục tùy chọn
+    $ProgressPreference = $OriginalProgressPreference
+    
+    Write-Host "    Đã tải xuống: $ApolloInstallerPath" -ForegroundColor Green
+
+    # Chạy file cài đặt Apollo ở chế độ âm thầm
+    Write-Host "  - Đang cài đặt Apollo (chế độ âm thầm)..." -ForegroundColor Gray
+    $apolloProcess = Start-Process -FilePath $ApolloInstallerPath -ArgumentList "/S" -PassThru -Wait -Verb RunAs
+
+    if ($apolloProcess.ExitCode -eq 0) {
+        Write-Host "    Cài đặt Apollo thành công." -ForegroundColor Green
+    } else {
+        Write-Warning "    Cài đặt Apollo hoàn tất với mã thoát: $($apolloProcess.ExitCode)."
+    }
+
+    # Xóa file cài đặt Apollo sau khi hoàn tất
+    if (Test-Path $ApolloInstallerPath) {
+        Remove-Item -Path $ApolloInstallerPath -Force
+        Write-Host "  - Đã dọn dẹp file cài đặt Apollo." -ForegroundColor Gray
+    }
+}
+catch {
+    Write-Warning "Không thể tải hoặc cài đặt Apollo. Lỗi: $_"
 }
 
 Write-Host ""
 Write-Host "========================================" -ForegroundColor Green
-Write-Host "        CAI DAT HOAN TAT" -ForegroundColor Green
+Write-Host "        CÀI ĐẶT HOÀN TẤT" -ForegroundColor Green
 Write-Host "========================================" -ForegroundColor Green
 Write-Host ""
-Write-Host "✓ Add-AppxPackage da duoc chay" -ForegroundColor White
-Write-Host "✓ Tien trinh sihost da duoc dung" -ForegroundColor White
-Write-Host "✓ WinRAR da duoc cai dat" -ForegroundColor White
-Write-Host "✓ DirectX Jun2010 da duoc cai dat" -ForegroundColor White
-Write-Host "✓ Visual C++ Redistributable da duoc cai dat" -ForegroundColor White
-Write-Host "✓ StarDesk da duoc cai dat" -ForegroundColor White
-Write-Host "✓ IDM da duoc cai dat" -ForegroundColor White
-Write-Host "✓ Steam da duoc cai dat" -ForegroundColor White
-Write-Host "✓ console.bat da duoc copy ra Desktop" -ForegroundColor White
-Write-Host "✓ Wallpaper da duoc dat" -ForegroundColor White
-Write-Host "✓ Tat ca cong Windows da bi tat" -ForegroundColor White
-Write-Host "✓ Windows Defender da bi tat" -ForegroundColor White
-Write-Host "✓ Driver NVIDIA da duoc cai dat (neu co GPU)" -ForegroundColor White
-Write-Host "✓ Dich vu am thanh da duoc cau hinh va khoi dong" -ForegroundColor White
-Write-Host "✓ Apollo da duoc cai dat" -ForegroundColor White
+Write-Host "✓ Driver NVIDIA đã được cài đặt" -ForegroundColor White
+Write-Host "✓ Dịch vụ âm thanh đã được cấu hình và khởi động" -ForegroundColor White
+Write-Host "✓ Apollo đã được cài đặt" -ForegroundColor White
 Write-Host ""
 Write-Host "========================================" -ForegroundColor Green
