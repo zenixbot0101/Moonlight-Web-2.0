@@ -4,6 +4,15 @@
 #===============================================
 $ErrorActionPreference = "Continue"
 
+# --- Xác định đường dẫn script ---
+if ($PSScriptRoot -eq "") {
+    $ScriptPath = (Get-Location).Path
+    Write-Host "PSScriptRoot rong, su dung thu muc hien tai: $ScriptPath" -ForegroundColor Yellow
+} else {
+    $ScriptPath = $PSScriptRoot
+}
+Write-Host "Thu muc script: $ScriptPath" -ForegroundColor Cyan
+
 # --- Kiểm tra quyền Quản trị viên ---
 Write-Host "Dang kiem tra quyen Quan tri vien..." -ForegroundColor Cyan
 
@@ -70,7 +79,7 @@ Write-Host ""
 # --- Cài đặt WinRAR từ file local ---
 Write-Host "Buoc 1: Cai dat WinRAR tu file local..." -ForegroundColor Cyan
 
-$WinRarLocalPath = Join-Path -Path $PSScriptRoot -ChildPath "Winrar.exe"
+$WinRarLocalPath = Join-Path -Path $ScriptPath -ChildPath "Winrar.exe"
 
 if (Test-Path $WinRarLocalPath) {
     try {
@@ -88,7 +97,7 @@ if (Test-Path $WinRarLocalPath) {
 # --- Cài đặt DirectX từ file local ---
 Write-Host "Buoc 2: Cai dat DirectX tu file local..." -ForegroundColor Cyan
 
-$DirectXLocalPath = Join-Path -Path $PSScriptRoot -ChildPath "DX11.exe"
+$DirectXLocalPath = Join-Path -Path $ScriptPath -ChildPath "DX11.exe"
 
 if (Test-Path $DirectXLocalPath) {
     try {
@@ -115,7 +124,7 @@ if (Test-Path $DirectXLocalPath) {
 # --- Cài đặt Visual C++ Redistributable ---
 Write-Host "Buoc 3: Cai dat Visual C++ Redistributable..." -ForegroundColor Cyan
 
-$VCRedistLocalPath = Join-Path -Path $PSScriptRoot -ChildPath "vc_redist.x64.exe"
+$VCRedistLocalPath = Join-Path -Path $ScriptPath -ChildPath "vc_redist.x64.exe"
 $VCRedistPath = $VCRedistLocalPath
 
 if (-not (Test-Path $VCRedistLocalPath)) {
@@ -153,7 +162,7 @@ if ($VCRedistPath -and (Test-Path $VCRedistPath)) {
 # --- Cài đặt StarDesk từ file local ---
 Write-Host "Buoc 4: Cai dat StarDesk tu file local..." -ForegroundColor Cyan
 
-$StarDeskLocalPath = Join-Path -Path $PSScriptRoot -ChildPath "Stardesk.exe"
+$StarDeskLocalPath = Join-Path -Path $ScriptPath -ChildPath "Stardesk.exe"
 
 if (Test-Path $StarDeskLocalPath) {
     try {
@@ -171,7 +180,7 @@ if (Test-Path $StarDeskLocalPath) {
 # --- Cài đặt IDM từ file local ---
 Write-Host "Buoc 5: Cai dat IDM tu file local..." -ForegroundColor Cyan
 
-$IDMLocalPath = Join-Path -Path $PSScriptRoot -ChildPath "IDM.exe"
+$IDMLocalPath = Join-Path -Path $ScriptPath -ChildPath "IDM.exe"
 
 if (Test-Path $IDMLocalPath) {
     try {
@@ -189,7 +198,7 @@ if (Test-Path $IDMLocalPath) {
 # --- Cài đặt Steam từ file local ---
 Write-Host "Buoc 6: Cai dat Steam tu file local..." -ForegroundColor Cyan
 
-$SteamLocalPath = Join-Path -Path $PSScriptRoot -ChildPath "Steam.exe"
+$SteamLocalPath = Join-Path -Path $ScriptPath -ChildPath "Steam.exe"
 
 if (Test-Path $SteamLocalPath) {
     try {
@@ -207,7 +216,7 @@ if (Test-Path $SteamLocalPath) {
 # --- Copy console.bat ra Desktop ---
 Write-Host "Buoc 7: Copy console.bat ra Desktop..." -ForegroundColor Cyan
 
-$ConsoleBatLocalPath = Join-Path -Path $PSScriptRoot -ChildPath "console.bat"
+$ConsoleBatLocalPath = Join-Path -Path $ScriptPath -ChildPath "console.bat"
 
 if (Test-Path $ConsoleBatLocalPath) {
     try {
@@ -291,7 +300,8 @@ Write-Host "Buoc 9: Tat tat ca cac cong Windows..." -ForegroundColor Cyan
 
 try {
     Write-Host "Tat tat ca cac cong Windows (firewall)..." -ForegroundColor Gray
-    netsh advfirewall set allprofiles state off -ErrorAction SilentlyContinue
+    # Sử dụng đúng cú pháp netsh
+    netsh advfirewall set allprofiles state off
     Write-Host "Da tat tat ca cac cong Windows." -ForegroundColor Green
 } catch {
     Write-Warning "Loi khi tat cong Windows: $_ - Skip"
@@ -302,11 +312,13 @@ Write-Host "Buoc 10: Tat Windows Defender..." -ForegroundColor Cyan
 
 try {
     Write-Host "Tat Windows Defender..." -ForegroundColor Gray
-    Stop-Service -Name "Windows Defender Service" -Force -ErrorAction SilentlyContinue
-    Set-Service -Name "Windows Defender Service" -StartupType Disabled -ErrorAction SilentlyContinue
+    Stop-Service -Name "WinDefend" -Force -ErrorAction SilentlyContinue
+    Set-Service -Name "WinDefend" -StartupType Disabled -ErrorAction SilentlyContinue
     
-    Set-NetFirewallProfile -Profile Domain,Private,Public -Enabled False -ErrorAction SilentlyContinue
+    # Tắt Windows Defender Firewall
+    netsh advfirewall set allprofiles state off
     
+    # Tắt Windows Defender Real-time Protection
     Set-MpPreference -DisableRealtimeMonitoring $true -ErrorAction SilentlyContinue
     
     Write-Host "Da tat Windows Defender." -ForegroundColor Green
@@ -514,37 +526,15 @@ Write-Host ""
 Write-Host "Buoc 12: Dang cau hinh va khoi dong dich vu am thanh..." -ForegroundColor Cyan
 
 try {
-    Write-Host "  - Cau hinh Audiosrv (Windows Audio)..." -ForegroundColor Gray
-    $audiosrv = sc.exe config Audiosrv start= auto -ErrorAction SilentlyContinue
-    if ($LASTEXITCODE -eq 0) {
-        Write-Host "    Da cau hinh Audiosrv thanh cong." -ForegroundColor Green
-    } else {
-        Write-Warning "    Khong the cau hinh Audiosrv. Ma loi: $LASTEXITCODE - Skip"
-    }
-
     Write-Host "  - Khoi dong Audiosrv (Windows Audio)..." -ForegroundColor Gray
-    $startAudiosrv = net start Audiosrv -ErrorAction SilentlyContinue
-    if ($LASTEXITCODE -eq 0) {
-        Write-Host "    Da khoi dong Audiosrv thanh cong." -ForegroundColor Green
-    } else {
-        Write-Warning "    Khong the khoi dong Audiosrv. Ma loi: $LASTEXITCODE - Skip"
-    }
-
-    Write-Host "  - Cau hinh AudioEndpointBuilder..." -ForegroundColor Gray
-    $audioEndpoint = sc.exe config AudioEndpointBuilder start= auto -ErrorAction SilentlyContinue
-    if ($LASTEXITCODE -eq 0) {
-        Write-Host "    Da cau hinh AudioEndpointBuilder thanh cong." -ForegroundColor Green
-    } else {
-        Write-Warning "    Khong the cau hinh AudioEndpointBuilder. Ma loi: $LASTEXITCODE - Skip"
-    }
+    Start-Service -Name "Audiosrv" -ErrorAction SilentlyContinue
+    Set-Service -Name "Audiosrv" -StartupType Automatic -ErrorAction SilentlyContinue
+    Write-Host "    Da khoi dong Audiosrv." -ForegroundColor Green
 
     Write-Host "  - Khoi dong AudioEndpointBuilder..." -ForegroundColor Gray
-    $startAudioEndpoint = net start AudioEndpointBuilder -ErrorAction SilentlyContinue
-    if ($LASTEXITCODE -eq 0) {
-        Write-Host "    Da khoi dong AudioEndpointBuilder thanh cong." -ForegroundColor Green
-    } else {
-        Write-Warning "    Khong the khoi dong AudioEndpointBuilder. Ma loi: $LASTEXITCODE - Skip"
-    }
+    Start-Service -Name "AudioEndpointBuilder" -ErrorAction SilentlyContinue
+    Set-Service -Name "AudioEndpointBuilder" -StartupType Automatic -ErrorAction SilentlyContinue
+    Write-Host "    Da khoi dong AudioEndpointBuilder." -ForegroundColor Green
 
     Write-Host "Hoan tat cau hinh dich vu am thanh." -ForegroundColor Green
 } catch {
@@ -556,7 +546,7 @@ Write-Host ""
 Write-Host "Buoc 13: Cai dat Apollo..." -ForegroundColor Cyan
 
 try {
-    $ApolloLocalPath = Join-Path -Path $PSScriptRoot -ChildPath "Apollo-0.4.6.exe"
+    $ApolloLocalPath = Join-Path -Path $ScriptPath -ChildPath "Apollo-0.4.6.exe"
 
     if (Test-Path $ApolloLocalPath) {
         try {
@@ -630,8 +620,8 @@ Write-Host ""
 Write-Host "Buoc 15: Khoi dong lai he thong..." -ForegroundColor Cyan
 
 try {
-    Write-Host "Dang khoi dong lai he thong sau 0 giay..." -ForegroundColor Gray
-    shutdown /r /t 0 -ErrorAction SilentlyContinue
+    Write-Host "Dang khoi dong lai he thong sau 10 giay..." -ForegroundColor Gray
+    shutdown /r /t 10 /c "He thong se khoi dong lai sau 10 giay"
     Write-Host "Da bat dau qua trinh khoi dong lai." -ForegroundColor Green
 } catch {
     Write-Warning "Khong the khoi dong lai he thong: $_ - Skip"
