@@ -181,6 +181,34 @@ try {
 }
 catch { Write-Log "LOI flush DNS: $($_.Exception.Message)" }
 
+# --- 10b. Re-register cac AppxPackage he thong (Shell Experience Host / XAML / Core) va restart shell ---
+# Thuong dung khi Start Menu / Search / Shell bi loi hien thi sau khi doi DNS/computer name/domain.
+$appxManifests = @(
+    "C:\Windows\SystemApps\MicrosoftWindows.Client.CBS_cw5n1h2txyewy\appxmanifest.xml",
+    "C:\Windows\SystemApps\Microsoft.UI.Xaml.CBS_8wekyb3d8bbwe\appxmanifest.xml",
+    "C:\Windows\SystemApps\MicrosoftWindows.Client.Core_cw5n1h2txyewy\appxmanifest.xml"
+)
+foreach ($manifest in $appxManifests) {
+    try {
+        if (Test-Path $manifest) {
+            Add-AppxPackage -Register -Path $manifest -DisableDevelopmentMode -ErrorAction Stop
+            Write-Log "Da re-register Appx: $manifest"
+        } else {
+            Write-Log "Bo qua (khong ton tai tren image nay): $manifest"
+        }
+    }
+    catch {
+        Write-Log "LOI re-register Appx ($manifest): $($_.Exception.Message)"
+    }
+}
+try {
+    Stop-Process -Name sihost -Force -ErrorAction Stop
+    Write-Log "Da restart sihost (Shell Infrastructure Host)."
+}
+catch {
+    Write-Log "LOI Stop-Process sihost (co the process khong ton tai vi chua co user logon - binh thuong luc startup script): $($_.Exception.Message)"
+}
+
 # --- 11. Ghi marker de lan boot sau khong lam lai (chi ghi SAU khi da thu ap dung xong) ---
 try {
     New-Item -Path $MarkerPath -Force | Out-Null
